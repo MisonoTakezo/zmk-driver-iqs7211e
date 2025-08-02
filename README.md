@@ -72,7 +72,7 @@ manifest:
         status = "okay";
         compatible = "azoteq,iqs7211e";
         reg = <0x56>;
-        irq-gpios = <&gpio0 21 GPIO_ACTIVE_LOW>;
+        irq-gpios = <&gpio0 21 GPIO_PULL_UP>;
         power-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>;
     };
 };
