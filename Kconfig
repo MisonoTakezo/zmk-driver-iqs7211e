@@ -1,0 +1,6 @@
+
+menuconfig IQS7211E
+    bool "IQS7211E capcacitive touch sensor"
+  select I2C
+    help
+      Enable IQS7211E capcacitive touch sensor.

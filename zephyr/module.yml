@@ -1,0 +1,6 @@
+name: zmk-driver-iqs7211e
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .
