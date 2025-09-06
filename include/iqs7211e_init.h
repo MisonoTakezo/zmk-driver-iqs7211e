@@ -56,11 +56,11 @@
 
 /* Report Rates and Timing */
 /* Memory Map Position 0x28 - 0x32 */
-#define ACTIVE_MODE_REPORT_RATE_0                0x0F
+#define ACTIVE_MODE_REPORT_RATE_0                0x01
 #define ACTIVE_MODE_REPORT_RATE_1                0x00
-#define IDLE_TOUCH_MODE_REPORT_RATE_0            0x3C
+#define IDLE_TOUCH_MODE_REPORT_RATE_0            0x01
 #define IDLE_TOUCH_MODE_REPORT_RATE_1            0x00
-#define IDLE_MODE_REPORT_RATE_0                  0x1E
+#define IDLE_MODE_REPORT_RATE_0                  0x01
 #define IDLE_MODE_REPORT_RATE_1                  0x00
 #define LP1_MODE_REPORT_RATE_0                   0x5A
 #define LP1_MODE_REPORT_RATE_1                   0x00
@@ -97,8 +97,8 @@
 
 /* Thresholds and Debounce Settings */
 /* Memory Map Position 0x38 - 0x3A */
-#define TRACKPAD_TOUCH_SET_THRESHOLD             0x14
-#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x0E
+#define TRACKPAD_TOUCH_SET_THRESHOLD             0x08
+#define TRACKPAD_TOUCH_CLEAR_THRESHOLD           0x04
 #define ALP_THRESHOLD_0                          0x08
 #define ALP_THRESHOLD_1                          0x00
 #define ALP_SET_DEBOUNCE                         0x04
@@ -136,9 +136,9 @@
 #define XY_DYNAMIC_FILTER_BOTTOM_SPEED_1         0x00
 #define XY_DYNAMIC_FILTER_TOP_SPEED_0            0x7C
 #define XY_DYNAMIC_FILTER_TOP_SPEED_1            0x00
-#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x07
-#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x80
-#define STATIONARY_TOUCH_MOV_THRESHOLD           0x14
+#define XY_DYNAMIC_FILTER_BOTTOM_BETA            0x01
+#define XY_DYNAMIC_FILTER_STATIC_FILTER_BETA     0x10
+#define STATIONARY_TOUCH_MOV_THRESHOLD           0x05
 #define FINGER_SPLIT_FACTOR                      0x03
 #define X_TRIM_VALUE                             0x14
 #define Y_TRIM_VALUE                             0x14
@@ -150,8 +150,8 @@
 
 /* Gesture Settings */
 /* Memory Map Position 0x4B - 0x55 */
-#define GESTURE_ENABLE_0                         0x1F
-#define GESTURE_ENABLE_1                         0xFF
+#define GESTURE_ENABLE_0                         0x00
+#define GESTURE_ENABLE_1                         0x00
 #define TAP_TOUCH_TIME_0                         0x96
 #define TAP_TOUCH_TIME_1                         0x00
 #define TAP_WAIT_TIME_0                          0x96

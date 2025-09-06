@@ -52,9 +52,7 @@ struct iqs7211e_data {
     bool double_tap_hold;
     uint8_t tap_count;
     int16_t tap_start_x, tap_start_y;
-    int16_t finger_2_prev_x, finger_2_prev_y;
-    bool finger_2_prev_valid;
-    uint8_t pending_click_type; // 0=none, 1=left, 2=right
+    uint8_t pending_click_type; // 0=none, 1=left
 };
 
 static int iqs7211e_i2c_read_reg(const struct device *dev, uint8_t reg, uint8_t *data, uint8_t len) {
@@ -534,10 +532,6 @@ static void iqs7211e_click_work_handler(struct k_work *work) {
         // Left click release
         LOG_DBG("Single tap - release");
         input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
-    } else if (data->pending_click_type == 2) {
-        // Right click release
-        LOG_DBG("Two finger tap - release");
-        input_report_key(dev, INPUT_BTN_1, 0, true, K_FOREVER);
     }
     data->pending_click_type = 0;
 }
@@ -569,8 +563,8 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
  
     uint8_t finger_count = base_data.info_flags[1] & 0x03;
     
-    if (finger_count == 1) {
-        // Single finger handling
+    if (finger_count >= 1) {
+        // Single finger handling only - ignore multi-finger
         uint16_t finger_1_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_x.h, base_data.finger_1_x.l);
         uint16_t finger_1_y = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_y.h, base_data.finger_1_y.l);
         
@@ -579,18 +573,8 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
             data->tap_start_x = finger_1_x;
             data->tap_start_y = finger_1_y;
             data->last_touch_time = current_time;
-        } else if (data->finger_2_prev_valid) {
-            // Transitioning from two finger to one finger - reset position reference
-            LOG_DBG("Transition from two finger to one finger - reset position");
-            data->tap_start_x = finger_1_x;
-            data->tap_start_y = finger_1_y;
-            data->last_touch_time = current_time;
-            // Reset tap state to allow normal single finger gestures
-            data->tap_count = 0;
-            data->double_tap_hold = false;
-            data->is_clicking = false;
         } else {
-            // Normal single finger movement
+            // Normal finger movement
             int16_t x = finger_1_x - data->previous_x;
             int16_t y = finger_1_y - data->previous_y;
             
@@ -602,105 +586,48 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
         data->previous_x = finger_1_x;
         data->previous_y = finger_1_y;
         data->previous_valid = true;
-        data->finger_2_prev_valid = false;
-        
-    } else if (finger_count == 2) {
-        // Two finger handling
-        uint16_t finger_1_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_x.h, base_data.finger_1_x.l);
-        uint16_t finger_1_y = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_y.h, base_data.finger_1_y.l);
-        uint16_t finger_2_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_2_x.h, base_data.finger_2_x.l);
-        
-        // Read finger 2 Y coordinate (need additional read)
-        uint8_t finger_2_y_bytes[2];
-        ret = iqs7211e_i2c_read_reg(dev, IQS7211E_MM_FINGER_2_Y, finger_2_y_bytes, 2);
-        uint16_t finger_2_y = (ret == 0) ? AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(finger_2_y_bytes[1], finger_2_y_bytes[0]) : 0;
-        
-        if (!data->finger_2_prev_valid) {
-            // Two finger touch start
-            data->last_touch_time = current_time;
-            // Reset single finger tap state when starting two finger gesture
-            data->tap_count = 0;
-            data->double_tap_hold = false;
-            if (data->is_clicking) {
-                data->is_clicking = false;
-                input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
-            }
-        } else {
-            // Two finger movement - scroll
-            int16_t y_movement = (finger_1_y + finger_2_y) / 2 - (data->previous_y + data->finger_2_prev_y) / 2;
-            int16_t x_movement = (finger_1_x + finger_2_x) / 2 - (data->previous_x + data->finger_2_prev_x) / 2;
-            
-            if (abs(y_movement) > 0) {
-                LOG_DBG("Scroll Y: %d", -y_movement);
-                input_report_rel(dev, INPUT_REL_WHEEL, -y_movement, true, K_FOREVER);
-            }
-            if (abs(x_movement) > 0) {
-                LOG_DBG("Scroll X: %d", x_movement);
-                input_report_rel(dev, INPUT_REL_HWHEEL, x_movement, true, K_FOREVER);
-            }
-        }
-        
-        data->previous_x = finger_1_x;
-        data->previous_y = finger_1_y;
-        data->finger_2_prev_x = finger_2_x;
-        data->finger_2_prev_y = finger_2_y;
-        data->previous_valid = true;
-        data->finger_2_prev_valid = true;
         
     } else {
         // No fingers - handle touch end events
-        if (data->previous_valid || data->finger_2_prev_valid) {
+        if (data->previous_valid) {
             int64_t touch_duration = current_time - data->last_touch_time;
+            int16_t tap_distance = abs(data->previous_x - data->tap_start_x) + abs(data->previous_y - data->tap_start_y);
             
-            if (data->finger_2_prev_valid) {
-                // Two finger tap - right click
-                if (touch_duration < 200) { // Quick tap
-                    LOG_DBG("Two finger tap - press");
-                    input_report_key(dev, INPUT_BTN_1, 1, true, K_FOREVER);
-                    data->pending_click_type = 2;
-                    k_work_schedule(&data->click_work, K_MSEC(50));
-                }
-            } else if (data->previous_valid) {
-                // Single finger tap handling
-                int16_t tap_distance = abs(data->previous_x - data->tap_start_x) + abs(data->previous_y - data->tap_start_y);
+            if (touch_duration < 200 && tap_distance < 50) { // Quick tap with minimal movement
+                int64_t tap_interval = current_time - data->last_tap_time;
                 
-                if (touch_duration < 200 && tap_distance < 50) { // Quick tap with minimal movement
-                    int64_t tap_interval = current_time - data->last_tap_time;
-                    
-                    if (tap_interval < 400 && data->tap_count == 1) { // Double tap
-                        LOG_DBG("Double tap - start hold click");
-                        data->double_tap_hold = true;
-                        data->is_clicking = true;
-                        input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
-                        data->tap_count = 0;
-                    } else {
-                        // Single tap
-                        if (!data->double_tap_hold) {
-                            LOG_DBG("Single tap - press");
-                            input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
-                            data->pending_click_type = 1;
-                            k_work_schedule(&data->click_work, K_MSEC(50));
-                        }
-                        data->tap_count = 1;
-                    }
-                    data->last_tap_time = current_time;
-                } else if (data->double_tap_hold && data->is_clicking) {
-                    // Release double-tap hold
-                    LOG_DBG("Release double tap hold");
-                    data->double_tap_hold = false;
-                    data->is_clicking = false;
-                    input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
-                }
-                
-                // Reset tap count if too much time passed
-                if (current_time - data->last_tap_time > 600) {
+                if (tap_interval < 400 && data->tap_count == 1) { // Double tap
+                    LOG_DBG("Double tap - start hold click");
+                    data->double_tap_hold = true;
+                    data->is_clicking = true;
+                    input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
                     data->tap_count = 0;
+                } else {
+                    // Single tap
+                    if (!data->double_tap_hold) {
+                        LOG_DBG("Single tap - press");
+                        input_report_key(dev, INPUT_BTN_0, 1, true, K_FOREVER);
+                        data->pending_click_type = 1;
+                        k_work_schedule(&data->click_work, K_MSEC(50));
+                    }
+                    data->tap_count = 1;
                 }
+                data->last_tap_time = current_time;
+            } else if (data->double_tap_hold && data->is_clicking) {
+                // Release double-tap hold
+                LOG_DBG("Release double tap hold");
+                data->double_tap_hold = false;
+                data->is_clicking = false;
+                input_report_key(dev, INPUT_BTN_0, 0, true, K_FOREVER);
+            }
+            
+            // Reset tap count if too much time passed
+            if (current_time - data->last_tap_time > 600) {
+                data->tap_count = 0;
             }
         }
         
         data->previous_valid = false;
-        data->finger_2_prev_valid = false;
     }
 }
 
