@@ -53,7 +53,19 @@ struct iqs7211e_data {
     uint8_t tap_count;
     int16_t tap_start_x, tap_start_y;
     uint8_t pending_click_type; // 0=none, 1=left
+    // Pinch gesture tracking
+    int16_t finger_2_prev_x, finger_2_prev_y;
+    bool finger_2_prev_valid;
+    uint16_t initial_distance;
+    bool pinch_active;
 };
+
+static uint16_t calculate_distance(int16_t x1, int16_t y1, int16_t x2, int16_t y2) {
+    int32_t dx = x2 - x1;
+    int32_t dy = y2 - y1;
+    // Simple distance calculation (avoiding sqrt for performance)
+    return (uint16_t)(abs(dx) + abs(dy));
+}
 
 static int iqs7211e_i2c_read_reg(const struct device *dev, uint8_t reg, uint8_t *data, uint8_t len) {
     const struct iqs7211e_config *cfg = dev->config;
@@ -563,13 +575,19 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
  
     uint8_t finger_count = base_data.info_flags[1] & 0x03;
     
-    if (finger_count >= 1) {
-        // Single finger handling only - ignore multi-finger
+    if (finger_count == 1) {
+        // Single finger handling
         uint16_t finger_1_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_x.h, base_data.finger_1_x.l);
         uint16_t finger_1_y = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_y.h, base_data.finger_1_y.l);
         
-        if (!data->previous_valid) {
-            // Touch start
+        // Reset pinch state when going to single finger
+        if (data->pinch_active) {
+            data->pinch_active = false;
+            LOG_DBG("Pinch gesture ended");
+        }
+        
+        if (!data->previous_valid || data->finger_2_prev_valid) {
+            // Touch start or transition from two finger
             data->tap_start_x = finger_1_x;
             data->tap_start_y = finger_1_y;
             data->last_touch_time = current_time;
@@ -586,10 +604,67 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
         data->previous_x = finger_1_x;
         data->previous_y = finger_1_y;
         data->previous_valid = true;
+        data->finger_2_prev_valid = false;
+        
+    } else if (finger_count == 2) {
+        // Two finger handling - pinch zoom
+        uint16_t finger_1_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_x.h, base_data.finger_1_x.l);
+        uint16_t finger_1_y = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_1_y.h, base_data.finger_1_y.l);
+        uint16_t finger_2_x = AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(base_data.finger_2_x.h, base_data.finger_2_x.l);
+        
+        // Read finger 2 Y coordinate
+        uint8_t finger_2_y_bytes[2];
+        ret = iqs7211e_i2c_read_reg(dev, IQS7211E_MM_FINGER_2_Y, finger_2_y_bytes, 2);
+        uint16_t finger_2_y = (ret == 0) ? AZOTEQ_IQS7211E_COMBINE_H_L_BYTES(finger_2_y_bytes[1], finger_2_y_bytes[0]) : 0;
+        
+        uint16_t current_distance = calculate_distance(finger_1_x, finger_1_y, finger_2_x, finger_2_y);
+        
+        if (!data->finger_2_prev_valid) {
+            // Two finger touch start
+            data->initial_distance = current_distance;
+            data->pinch_active = true;
+            data->last_touch_time = current_time;
+            LOG_DBG("Pinch gesture started, initial distance: %d", data->initial_distance);
+        } else if (data->pinch_active) {
+            // Pinch gesture in progress
+            int16_t distance_change = current_distance - data->initial_distance;
+            
+            // Only trigger zoom if distance change is significant
+            if (abs(distance_change) > 30) {
+                if (distance_change > 0) {
+                    // Zoom in (Command + scroll up)
+                    LOG_DBG("Zoom in, distance change: %d", distance_change);
+                    input_report_key(dev, INPUT_KEY_LEFTMETA, 1, false, K_FOREVER);
+                    input_report_rel(dev, INPUT_REL_WHEEL, 1, false, K_FOREVER);
+                    input_report_key(dev, INPUT_KEY_LEFTMETA, 0, true, K_FOREVER);
+                } else {
+                    // Zoom out (Command + scroll down)
+                    LOG_DBG("Zoom out, distance change: %d", distance_change);
+                    input_report_key(dev, INPUT_KEY_LEFTMETA, 1, false, K_FOREVER);
+                    input_report_rel(dev, INPUT_REL_WHEEL, -1, false, K_FOREVER);
+                    input_report_key(dev, INPUT_KEY_LEFTMETA, 0, true, K_FOREVER);
+                }
+                // Update reference distance to prevent repeated events
+                data->initial_distance = current_distance;
+            }
+        }
+        
+        data->previous_x = finger_1_x;
+        data->previous_y = finger_1_y;
+        data->finger_2_prev_x = finger_2_x;
+        data->finger_2_prev_y = finger_2_y;
+        data->previous_valid = true;
+        data->finger_2_prev_valid = true;
         
     } else {
         // No fingers - handle touch end events
-        if (data->previous_valid) {
+        if (data->pinch_active) {
+            data->pinch_active = false;
+            LOG_DBG("Pinch gesture ended");
+        }
+        
+        if (data->previous_valid && !data->finger_2_prev_valid) {
+            // Single finger tap handling
             int64_t touch_duration = current_time - data->last_touch_time;
             int16_t tap_distance = abs(data->previous_x - data->tap_start_x) + abs(data->previous_y - data->tap_start_y);
             
@@ -628,6 +703,7 @@ static void iqs7211e_motion_work_handler(struct k_work *work) {
         }
         
         data->previous_valid = false;
+        data->finger_2_prev_valid = false;
     }
 }
 
@@ -739,6 +815,9 @@ static int iqs7211e_init(const struct device *dev) {
     data->init_complete = false;
     data->previous_valid = false;
     data->pending_click_type = 0;
+    data->finger_2_prev_valid = false;
+    data->pinch_active = false;
+    data->initial_distance = 0;
     
     k_work_init(&data->motion_work, iqs7211e_motion_work_handler);
     k_work_init_delayable(&data->click_work, iqs7211e_click_work_handler);

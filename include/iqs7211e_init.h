@@ -150,7 +150,7 @@
 
 /* Gesture Settings */
 /* Memory Map Position 0x4B - 0x55 */
-#define GESTURE_ENABLE_0                         0x00
+#define GESTURE_ENABLE_0                         0x02
 #define GESTURE_ENABLE_1                         0x00
 #define TAP_TOUCH_TIME_0                         0x96
 #define TAP_TOUCH_TIME_1                         0x00
